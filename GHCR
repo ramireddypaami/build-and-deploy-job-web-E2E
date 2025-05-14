@@ -1,0 +1,56 @@
+name: Build and Deploy Job Web E2E DEV
+run-name: "Job Web pipeline for E2E DEV"
+on:
+  workflow_dispatch:
+
+jobs:
+  build_e2e_dev:
+    name: Build and Push Docker Image to GHCR
+    runs-on: [e2e-prod-3]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set environment variables
+        run: |
+          REPO_NAME=$(echo "${GITHUB_REPOSITORY}" | cut -d'/' -f2)
+          COMMIT_ID=${GITHUB_SHA:0:8}
+          echo "REPO_NAME=$REPO_NAME" >> $GITHUB_ENV
+          echo "COMMIT_ID=$COMMIT_ID" >> $GITHUB_ENV
+          echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY}:${COMMIT_ID}" >> $GITHUB_ENV
+
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Build and Push Docker image to GHCR
+        run: |
+          echo "Building the Docker image..."
+          npm install
+          DISABLE_ESLINT_PLUGIN=true npm run build:e2e_dev
+          docker build -f Dockerfile-E2E-Dev -t $IMAGE_NAME .
+          docker push $IMAGE_NAME
+
+  deploy_e2e_dev:
+    name: Deploy from GHCR to Docker
+    needs: [build_e2e_dev]
+    runs-on: [e2e-prod-3]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set environment variables
+        run: |
+          REPO_NAME=$(echo "${GITHUB_REPOSITORY}" | cut -d'/' -f2)
+          COMMIT_ID=${GITHUB_SHA:0:8}
+          echo "REPO_NAME=$REPO_NAME" >> $GITHUB_ENV
+          echo "COMMIT_ID=$COMMIT_ID" >> $GITHUB_ENV
+          echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY}:${COMMIT_ID}" >> $GITHUB_ENV
+
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Pull and Deploy Docker image from GHCR
+        run: |
+          echo "Pulling and deploying Docker image..."
+          docker pull $IMAGE_NAME
+          docker stop $REPO_NAME || true && docker rm $REPO_NAME || true
+          docker run -d -p 80:80 -p 443:443 --name $REPO_NAME $IMAGE_NAME
+          echo "Application successfully deployed."
